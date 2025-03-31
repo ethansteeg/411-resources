@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import logging
 import sqlite3
-from typing import Any, List
+from typing import Any, List, Dict
 
 from boxing.utils.sql_utils import get_db_connection
 from boxing.utils.logger import configure_logger
@@ -122,7 +122,7 @@ def delete_boxer(self, boxer_id: int) -> None:
         raise e
 
 
-def get_leaderboard(self, sort_by: str = "wins") -> List[dict[str, Any]]:
+def get_leaderboard(self, sort_by: str = "wins") -> List[Dict[str, Any]]:
     """
     Retrieves the leaderboard of boxers, sorted by wins or win percentage. 
 
@@ -130,7 +130,7 @@ def get_leaderboard(self, sort_by: str = "wins") -> List[dict[str, Any]]:
         sort_by (str, optional): the sorting criteria ("wins" or "win_pct"). Defaults to "wins"
 
     Returns:
-        List[dict[str, Any]]: A list of boxer dictionaries, sorted by the specied criteria. 
+        List[Dict[str, Any]]: A list of boxer dictionaries, sorted by the specied criteria. 
     
     Raises:
         ValueError: If the sort_by parameter is invalid.
