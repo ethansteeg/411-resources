@@ -1,236 +1,211 @@
 import pytest
-from unittest.mock import patch, Mock
+from contextlib import contextmanager
+import sqlite3
+import re
 
-from ..boxing.models.boxers_model import Boxer, get_boxer_by_id, get_boxer_by_name, get_leaderboard, get_weight_class
+from boxing.models.boxers_model import (
+    Boxer,
+    get_boxer_by_id,
+    get_boxer_by_name,
+    get_weight_class,
+    delete_boxer,
+    update_boxer_stats
+)
 
+# ----------------------------
+# Fixtures
+# ----------------------------
 
+def normalize_whitespace(sql_query: str) -> str:
+    return re.sub(r"\s+", " ", sql_query).strip()
+
+# Mocking the database connection for tests
 @pytest.fixture
-def sample_boxer1():
-    return Boxer("Boxer 1", 160, 70, 72.0, 25)
+def mock_cursor(mocker):
+    mock_conn = mocker.Mock()
+    mock_cursor = mocker.Mock()
 
-@pytest.fixture
-def sample_boxer2():
-    return Boxer("Boxer 2", 180, 72, 74.0, 28)
-
-@pytest.fixture
-def sample_boxer3():
-    return Boxer("Boxer 3", 140, 68, 70.0, 22)
-
-@pytest.fixture
-def sample_boxers(sample_boxer1, sample_boxer2, sample_boxer3):
-    return [sample_boxer1, sample_boxer2, sample_boxer3]
-
-
-##################################################
-# Boxer Creation and Deletion Test Cases
-##################################################
-
-
-def test_create_boxer_valid_input(mocker):
-    """Test create_boxer with valid input."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
+    # Mock the connection's cursor
     mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.fetchone.return_value = None  # Boxer doesn't exist
+    mock_cursor.fetchone.return_value = None  # Default return for queries
+    mock_cursor.fetchall.return_value = []
+    mock_conn.commit.return_value = None
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        Boxer.create_boxer("Test Boxer", 160, 70, 72.0, 25)
+    # Mock the get_db_connection context manager from sql_utils
+    @contextmanager
+    def mock_get_db_connection():
+        yield mock_conn  # Yield the mocked connection object
 
-    mock_cursor.execute.assert_called_with(
-        """INSERT INTO boxers (name, weight, height, reach, age) VALUES (?, ?, ?, ?, ?)""",
-        ("Test Boxer", 160, 70, 72.0, 25),
-    )
-    mock_conn.commit.assert_called_once()
+    mocker.patch("boxing.models.boxers_model.get_db_connection", mock_get_db_connection)
 
+    return mock_cursor  # Return the mock cursor so we can set expectations per test    
 
-def test_create_boxer_duplicate_name(mocker):
-    """Test create_boxer with duplicate name."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.fetchone.return_value = (1,)  # Boxer exists
+# ----------------------------
+# Create Boxer
+# ----------------------------
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(ValueError, match="Boxer with name 'Test Boxer' already exists."):
-            Boxer.create_boxer("Test Boxer", 160, 70, 72.0, 25)
+def test_create_boxer_valid(mock_cursor):
+    """Test creating a valid boxer with expected SQL insert."""
+    Boxer.create_boxer("Boxer A", 160, 70, 72.0, 25)
+    insert_sql = normalize_whitespace("""
+        INSERT INTO boxers (name, weight, height, reach, age)
+        VALUES (?, ?, ?, ?, ?)
+    """)
+    assert normalize_whitespace(mock_cursor.execute.call_args_list[1][0][0]) == insert_sql
+    assert mock_cursor.execute.call_args_list[1][0][1] == ("Boxer A", 160, 70, 72.0, 25)
 
+def test_create_boxer_duplicate(mock_cursor):
+    """Test creating a boxer with a duplicate name raises ValueError."""
+    mock_cursor.fetchone.return_value = (1,)
+    with pytest.raises(ValueError, match="Boxer With name 'Boxer A' already exists"):
+        Boxer.create_boxer("Boxer A", 160, 70, 72.0, 25)
 
-def test_create_boxer_database_error(mocker):
-    """Test create_boxer with database error."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.execute.side_effect = Exception("Database error")
+def test_create_boxer_invalid_inputs():
+    """Test creation with invalid weight, height, reach, or age."""
+    with pytest.raises(ValueError, match="Invalid weight: 120"):
+        Boxer.create_boxer("Boxer B", 120, 70, 72.0, 25)
+    with pytest.raises(ValueError, match="Invalid height: 0"):
+        Boxer.create_boxer("Boxer B", 150, 0, 72.0, 25)
+    with pytest.raises(ValueError, match="Invalid reach: 0.0"):
+        Boxer.create_boxer("Boxer B", 150, 70, 0.0, 25)
+    with pytest.raises(ValueError, match="Invalid age: 17"):
+        Boxer.create_boxer("Boxer B", 150, 70, 72.0, 17)
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(Exception, match="Database error"):
-            Boxer.create_boxer("Test Boxer", 160, 70, 72.0, 25)
+def test_create_boxer_sql_error(mock_cursor):
+    """Test database error during boxer creation raises sqlite3.Error."""
+    mock_cursor.execute.side_effect = sqlite3.Error("DB error")
+    with pytest.raises(sqlite3.Error, match="DB error"):
+        Boxer.create_boxer("Boxer C", 150, 70, 72.0, 25)
 
+# ----------------------------
+# Delete Boxer
+# ----------------------------
 
-def test_delete_boxer_valid_input(mocker, sample_boxer1):
-    """Test delete_boxer with valid input."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.rowcount = 1
+def test_delete_boxer_valid(mock_cursor):
+    """Test successful deletion of an existing boxer by ID."""
+    mock_cursor.fetchone.return_value = (1,)
+    delete_boxer(None, 1)
+    assert normalize_whitespace(mock_cursor.execute.call_args_list[1][0][0]) == "DELETE FROM boxers WHERE id = ?"
+    assert mock_cursor.execute.call_args_list[1][0][1] == (1,)
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        Boxer.delete_boxer(sample_boxer1.name)
-
-    mock_cursor.execute.assert_called_with("DELETE FROM boxers WHERE name = ?", (sample_boxer1.name,))
-    mock_conn.commit.assert_called_once()
-
-
-def test_delete_boxer_invalid_id(mocker):
-    """Test delete_boxer with invalid name."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.rowcount = 0
-
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(ValueError, match="Boxer with name 'Nonexistent Boxer' not found."):
-            Boxer.delete_boxer("Nonexistent Boxer")
-
-
-def test_delete_boxer_database_error(mocker, sample_boxer1):
-    """Test delete_boxer with database error."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.execute.side_effect = Exception("Database error")
-
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(Exception, match="Database error"):
-            Boxer.delete_boxer(sample_boxer1.name)
-
-
-##################################################
-# Boxer Retrieval Test Cases
-##################################################
-
-
-def test_get_boxer_by_id_valid_input(mocker, sample_boxer1):
-    """Test get_boxer_by_id with valid input."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.fetchone.return_value = (1, sample_boxer1.name, sample_boxer1.weight, sample_boxer1.height, sample_boxer1.reach, sample_boxer1.age)
-
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        boxer = get_boxer_by_id(1)
-
-    assert boxer == (1, sample_boxer1.name, sample_boxer1.weight, sample_boxer1.height, sample_boxer1.reach, sample_boxer1.age)
-
-
-def test_get_boxer_by_id_invalid_id(mocker):
-    """Test get_boxer_by_id with invalid id."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
+def test_delete_boxer_not_found(mock_cursor):
+    """Test deleting non-existent boxer raises ValueError."""
     mock_cursor.fetchone.return_value = None
+    with pytest.raises(ValueError, match="Boxer with ID 999 not found"):
+        delete_boxer(None, 999)
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(ValueError, match="Boxer with id 2 not found."):
-            get_boxer_by_id(2)
+def test_delete_boxer_invalid_id():
+    """Test deleting boxer with invalid ID raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid Boxer ID: -1"):
+        delete_boxer(None, -1)
 
+def test_delete_boxer_db_error(mock_cursor):
+    """Test database error during delete raises sqlite3.Error."""
+    mock_cursor.execute.side_effect = sqlite3.Error("DB fail")
+    with pytest.raises(sqlite3.Error, match="DB fail"):
+        delete_boxer(None, 1)
 
-def test_get_boxer_by_id_database_error(mocker):
-    """Test get_boxer_by_id with database error."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.execute.side_effect = Exception("Database error")
+# ----------------------------
+# Get Boxer by ID and Name
+# ----------------------------
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(Exception, match="Database error"):
-            get_boxer_by_id(1)
+def test_get_boxer_by_id_valid(mock_cursor):
+    """Test retrieving a boxer by valid ID returns correct object."""
+    mock_cursor.fetchone.return_value = (1, "Boxer A", 150, 70, 72.0, 25)
+    boxer = get_boxer_by_id(1)
+    assert boxer.name == "Boxer A"
+    assert boxer.weight_class == "LIGHTWEIGHT"
 
-
-def test_get_boxer_by_name_valid_input(mocker, sample_boxer1):
-    """Test get_boxer_by_name with valid input."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.fetchone.return_value = (1, sample_boxer1.name, sample_boxer1.weight, sample_boxer1.height, sample_boxer1.reach, sample_boxer1.age)
-
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        boxer = get_boxer_by_name(sample_boxer1.name)
-
-    assert boxer == (1, sample_boxer1.name, sample_boxer1.weight, sample_boxer1.height, sample_boxer1.reach, sample_boxer1.age)
-
-
-def test_get_boxer_by_name_invalid_name(mocker):
-    """Test get_boxer_by_name with invalid name."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
+def test_get_boxer_by_id_not_found(mock_cursor):
+    """Test ValueError is raised when boxer ID not found."""
     mock_cursor.fetchone.return_value = None
+    with pytest.raises(ValueError, match="Boxer with ID 999 not found"):
+        get_boxer_by_id(999)
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(ValueError, match="Boxer with name 'Nonexistent Boxer' not found."):
-            get_boxer_by_name("Nonexistent Boxer")
+def test_get_boxer_by_id_invalid():
+    """Test invalid boxer ID raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid boxer ID: -1"):
+        get_boxer_by_id(-1)
 
+def test_get_boxer_by_id_db_error(mock_cursor):
+    """Test DB error during ID lookup raises sqlite3.Error."""
+    mock_cursor.execute.side_effect = sqlite3.Error("DB fail")
+    with pytest.raises(sqlite3.Error):
+        get_boxer_by_id(1)
 
-def test_get_boxer_by_name_database_error(mocker):
-    """Test get_boxer_by_name with database error."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.execute.side_effect = Exception("Database error")
+def test_get_boxer_by_name_valid(mock_cursor):
+    """Test retrieving a boxer by valid name returns Boxer."""
+    mock_cursor.fetchone.return_value = (1, "Boxer A", 160, 70, 72.0, 25)
+    boxer = get_boxer_by_name("Boxer A")
+    assert boxer.name == "Boxer A"
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(Exception, match="Database error"):
-            get_boxer_by_name("Any Name")
+def test_get_boxer_by_name_invalid():
+    """Test invalid name input (empty) raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid boxer name: "):
+        get_boxer_by_name("")
 
+def test_get_boxer_by_name_not_found(mock_cursor):
+    """Test retrieving nonexistent boxer by name raises ValueError."""
+    mock_cursor.fetchone.return_value = None
+    with pytest.raises(ValueError, match="Boxer 'Ghost' not found"):
+        get_boxer_by_name("Ghost")
 
-##################################################
-# Leaderboard Test Cases
-##################################################
+def test_get_boxer_by_name_db_error(mock_cursor):
+    """Test DB error during name lookup raises sqlite3.Error."""
+    mock_cursor.execute.side_effect = sqlite3.Error("DB issue")
+    with pytest.raises(sqlite3.Error):
+        get_boxer_by_name("Boxer A")
 
-def test_get_leaderboard_valid_input(mocker, sample_boxers):
-    """Test get_leaderboard with valid input."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.fetchall.return_value = [(b.name, b.weight, b.height, b.reach, b.age) for b in sample_boxers]
+# ----------------------------
+# Weight Class
+# ----------------------------
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        leaderboard = get_leaderboard(mock_conn, "weight")
+def test_get_weight_class_valid():
+    """Test weight class determination for valid weight ranges."""
+    assert get_weight_class(125) == "FEATHERWEIGHT"
+    assert get_weight_class(150) == "LIGHTWEIGHT"
+    assert get_weight_class(180) == "MIDDLEWEIGHT"
+    assert get_weight_class(205) == "HEAVYWEIGHT"
 
-    assert leaderboard == [(b.name, b.weight, b.height, b.reach, b.age) for b in sample_boxers]
+def test_get_weight_class_invalid():
+    """Test ValueError raised for weight below 125."""
+    with pytest.raises(ValueError, match="Invalid weight: 124"):
+        get_weight_class(124)
 
+# ----------------------------
+# Update Boxer Stats
+# ----------------------------
 
-def test_get_leaderboard_invalid_sort_by(mocker):
-    """Test get_leaderboard with invalid sort_by parameter."""
-    mock_conn = mocker.MagicMock()
+def test_update_boxer_stats_valid_win(mock_cursor):
+    """Test incrementing fights and wins for a win result."""
+    mock_cursor.fetchone.return_value = (1,)
+    update_boxer_stats(1, "win")
+    assert "UPDATE boxers SET fights = fights + 1, wins = wins + 1 WHERE id = ?" in mock_cursor.execute.call_args_list[1][0][0]
 
-    with pytest.raises(ValueError, match=r"Invalid sort by parameter."):
-        get_leaderboard(mock_conn, "invalid_sort")
+def test_update_boxer_stats_valid_loss(mock_cursor):
+    """Test incrementing only fights for a loss result."""
+    mock_cursor.fetchone.return_value = (1,)
+    update_boxer_stats(1, "loss")
+    assert "UPDATE boxers SET fights = fights + 1 WHERE id = ?" in mock_cursor.execute.call_args_list[1][0][0]
 
+def test_update_boxer_stats_invalid_result():
+    """Test invalid fight result raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid result: draw"):
+        update_boxer_stats(1, "draw")
 
-def test_get_leaderboard_database_error(mocker):
-    """Test get_leaderboard with database error."""
-    mock_conn = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-    mock_conn.cursor.return_value = mock_cursor
-    mock_cursor.execute.side_effect = Exception("Database error")
+def test_update_boxer_stats_invalid_id():
+    """Test negative boxer ID raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid boxer ID: -1"):
+        update_boxer_stats(-1, "win")
 
-    with patch("boxing.utils.sql_utils.get_db_connection", return_value=mock_conn):
-        with pytest.raises(Exception, match="Database error"):
-            get_leaderboard(mock_conn, "weight")
+def test_update_boxer_stats_not_found(mock_cursor):
+    """Test updating stats for non-existent boxer raises ValueError."""
+    mock_cursor.fetchone.return_value = None
+    with pytest.raises(ValueError, match="Boxer with ID 1 not found"):
+        update_boxer_stats(1, "win")
 
-##################################################
-# Weight Class Test Cases
-##################################################
-
-def test_get_weight_class_valid_input():
-    assert get_weight_class(130) == "Lightweight"
-    assert get_weight_class(150) == "Welterweight"
-    assert get_weight_class(170) == "Middleweight"
-    assert get_weight_class(200) == "Light Heavyweight"
-    assert get_weight_class(220) == "Heavyweight"
-
-def test_get_weight_class_invalid_input():
-  with pytest.raises(ValueError, match = "Invalid weight: 1. Weight must be at least 125."):
-    get_weight_class(1)
+def test_update_boxer_stats_db_error(mock_cursor):
+    """Test DB error during stats update raises sqlite3.Error."""
+    mock_cursor.execute.side_effect = sqlite3.Error("DB error")
+    with pytest.raises(sqlite3.Error):
+        update_boxer_stats(1, "win")
