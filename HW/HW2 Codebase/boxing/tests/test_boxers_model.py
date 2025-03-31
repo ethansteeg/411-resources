@@ -3,8 +3,7 @@
 import sqlite3
 from unittest.mock import patch, Mock
 import pytest
-
-from boxing.models import Boxer, get_weight_class
+from ..boxing.models import Boxer, get_weight_class
 
 
 def test_boxer_creation():
