@@ -26,66 +26,66 @@ class Boxer:
         self.weight_class = get_weight_class(self.weight)  # Automatically assign weight class
 
     
-    def create_boxer(name: str, weight: int, height: int, reach: float, age: int) -> None:
+def create_boxer(name: str, weight: int, height: int, reach: float, age: int) -> None:
 
-        """
-        Creates a new boxer in database
+    """
+    Creates a new boxer in database
 
-        Args:
-            name (str): name of boxer 
-            weight (int): weight of boxer in lb 
-            height (int): height of bxoer in inches 
-            reach (float): reach of boxer in inches
-            age (int): age of the boxer
-        
-        Raises: 
-            ValueError: If any input parameter is invalid or if a boxer with the same name already exists 
-            sqlite3.Error: If a database error occurs
-        """
-      
-        logger.info(f"Creating Boxer: {name}")
+    Args:
+        name (str): name of boxer 
+        weight (int): weight of boxer in lb 
+        height (int): height of bxoer in inches 
+        reach (float): reach of boxer in inches
+        age (int): age of the boxer
+    
+    Raises: 
+        ValueError: If any input parameter is invalid or if a boxer with the same name already exists 
+        sqlite3.Error: If a database error occurs
+    """
+    
+    logger.info(f"Creating Boxer: {name}")
 
-        if weight < 125:
-            logger.error(f"Invalid weight: {weight}. Must be at least 125")
-            raise ValueError(f"Invalid weight: {weight}. Must be at least 125.")
-        
-        if height <= 0:
-            logger.error(f"Invalid height: {height}. Must be greater than 0")
-            raise ValueError(f"Invalid height: {height}. Must be greater than 0.")
-        
-        if reach <= 0:
-            logger.error(f"Invalid reach: {reach}. Must be greater than 0.")
-            raise ValueError(f"Invalid reach: {reach}. Must be greater than 0.")
-        
-        if not (18 <= age <= 40):
-            logger.error(f"Invalid age: {age}. Must be between 18 and 40")
-            raise ValueError(f"Invalid age: {age}. Must be between 18 and 40.")
+    if weight < 125:
+        logger.error(f"Invalid weight: {weight}. Must be at least 125")
+        raise ValueError(f"Invalid weight: {weight}. Must be at least 125.")
+    
+    if height <= 0:
+        logger.error(f"Invalid height: {height}. Must be greater than 0")
+        raise ValueError(f"Invalid height: {height}. Must be greater than 0.")
+    
+    if reach <= 0:
+        logger.error(f"Invalid reach: {reach}. Must be greater than 0.")
+        raise ValueError(f"Invalid reach: {reach}. Must be greater than 0.")
+    
+    if not (18 <= age <= 40):
+        logger.error(f"Invalid age: {age}. Must be between 18 and 40")
+        raise ValueError(f"Invalid age: {age}. Must be between 18 and 40.")
 
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
 
-                # Check if the boxer already exists (name must be unique)
-                cursor.execute("SELECT 1 FROM boxers WHERE name = ?", (name,))
-                if cursor.fetchone():
-                    logger.error(f"Boxer With name '{name}' already exists")
-                    raise ValueError(f"Boxer With name '{name}' already exists")
+            # Check if the boxer already exists (name must be unique)
+            cursor.execute("SELECT 1 FROM boxers WHERE name = ?", (name,))
+            if cursor.fetchone():
+                logger.error(f"Boxer With name '{name}' already exists")
+                raise ValueError(f"Boxer With name '{name}' already exists")
 
-                cursor.execute("""
-                    INSERT INTO boxers (name, weight, height, reach, age)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (name, weight, height, reach, age))
+            cursor.execute("""
+                INSERT INTO boxers (name, weight, height, reach, age)
+                VALUES (?, ?, ?, ?, ?)
+            """, (name, weight, height, reach, age))
 
-                conn.commit()
-                logger.info(f"Boxer {name} created successfully.")
+            conn.commit()
+            logger.info(f"Boxer {name} created successfully.")
 
-        except sqlite3.IntegrityError:
-            logger.error(f"Boxer With Name '{name}' already exists")
-            raise ValueError(f"Boxer With Name '{name}' already exists")
+    except sqlite3.IntegrityError:
+        logger.error(f"Boxer With Name '{name}' already exists")
+        raise ValueError(f"Boxer With Name '{name}' already exists")
 
-        except sqlite3.Error as e:
-            logger.error(f"Database Error: {e}")
-            raise e
+    except sqlite3.Error as e:
+        logger.error(f"Database Error: {e}")
+        raise e
 
 
 def delete_boxer(self, boxer_id: int) -> None:
@@ -295,9 +295,15 @@ def get_weight_class(weight: int) -> str:
     """
     logger.info(f"Calculating weight class for weight: {weight}")
 
-    if not isinstance(weight, int) or weight < 0:
-        logger.error(f"Invalid Weight: {weight}. Must be a non-negative integer.")
-        raise ValueError(f"Invalid Weight: {weight}. Must be a non-negative integer.")
+    try:
+        weight = int(weight)
+    except (TypeError, ValueError):
+        logger.error(f"Invalid Weight: {weight}. Must be an integer.")
+        raise ValueError(f"Invalid Weight: {weight}. Must be an integer.")
+
+    if weight < 0:
+        logger.error(f"Invalid Weight: {weight}. Must be non-negative.")
+        raise ValueError(f"Invalid Weight: {weight}. Must be non-negative.")
 
     if weight >= 203:
         weight_class = 'HEAVYWEIGHT'
@@ -313,6 +319,7 @@ def get_weight_class(weight: int) -> str:
 
     logger.info(f"Weight Class Calculated: {weight_class}")
     return weight_class
+
 
 
 def update_boxer_stats(boxer_id: int, result: str) -> None:
