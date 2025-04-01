@@ -5,7 +5,16 @@ from flask import current_app, has_request_context
 
 
 def configure_logger(logger):
+    """
+    This function sets up a basic logging configuration that outputs log messages to stderr.
+    It uses a formatter to include the timestamp, logger name, log level, and message in the output. 
+
+    Args:
+        logger (logging.Logger): The logger object to configure 
+
+    """
     logger.setLevel(logging.DEBUG)
+    logger.debug("Configuring logger...")
 
     # Create a console handler that logs to stderr
     handler = logging.StreamHandler(sys.stderr)
